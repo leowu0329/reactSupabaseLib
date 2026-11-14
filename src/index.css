@@ -1,0 +1,6 @@
+body {
+  /* 優先使用 Roboto 渲染英數字元，其餘字元自動回退至 Noto Sans TC */
+  font-family: 'Roboto', 'Noto Sans TC', sans-serif;
+  background-color: #f8f9fa;
+  color: #212529;
+}
