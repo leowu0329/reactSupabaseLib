@@ -1,338 +1,144 @@
-import React, { useState, useEffect } from 'react';
-import { supabase } from '../lib/supabase';
-import { usePermission } from '../hooks/usePermission';
-import PermissionGuard from '../components/PermissionGuard';
-import { ROLE_LABELS } from '../config/permissions';
+import React, { useState } from 'react';
+import { libraryService } from '../lib/libraryService';
 
 export default function AdminDashboard() {
-  const { role, can, loading } = usePermission();
-  const [books, setBooks] = useState([]);
-  const [borrows, setBorrows] = useState([]);
-  const [auditLogs, setAuditLogs] = useState([]);
-  const [maxBorrowDays, setMaxBorrowDays] = useState(14);
-  const [newTitle, setNewTitle] = useState('');
-  const [newAuthor, setNewAuthor] = useState('');
-  const [newIsbn, setNewIsbn] = useState('');
-  const [statusMsg, setStatusMsg] = useState('');
+  const [activeTab, setActiveTab] = useState('circulation');
+  const [message, setMessage] = useState(null);
 
-  useEffect(() => {
-    if (!loading) {
-      loadBooks();
-      if (can('borrow.approve') || can('borrow.return')) loadBorrows();
-      if (can('audit.read')) loadAuditLogs();
-      loadSystemSettings();
-    }
-  }, [loading, role]);
+  // 圖書建檔狀態
+  const [bookForm, setBookForm] = useState({
+    isbn: '', title: '', author: '', publisher: '', category: '資訊科學', tags: 'JavaScript,前端', copyCount: 2, location: 'A區-1架'
+  });
 
-  const loadBooks = async () => {
-    const { data } = await supabase.from('books').select('*').order('created_at', { ascending: false });
-    if (data) setBooks(data);
-  };
+  // 借還書掃碼狀態
+  const [readerId, setReaderId] = useState('');
+  const [barcode, setBarcode] = useState('');
 
-  const loadBorrows = async () => {
-    const { data } = await supabase.from('borrows').select('*').order('created_at', { ascending: false });
-    if (data) setBorrows(data);
-  };
-
-  const loadAuditLogs = async () => {
-    const { data } = await supabase.from('audit_logs').select('*').order('created_at', { ascending: false }).limit(20);
-    if (data) setAuditLogs(data);
-  };
-
-  const loadSystemSettings = async () => {
-    const { data } = await supabase.from('system_settings').select('value').eq('key', 'max_borrow_days').single();
-    if (data?.value?.days) setMaxBorrowDays(data.value.days);
-  };
-
-  // 新增書籍 (book.create)
   const handleCreateBook = async (e) => {
     e.preventDefault();
-    if (!newTitle.trim() || !newIsbn.trim()) return;
-    const { error } = await supabase.from('books').insert([
-      {
-        title: newTitle.trim(),
-        author: newAuthor.trim(),
-        isbn: newIsbn.trim(),
-        available: true,
-      },
-    ]);
-    if (error) {
-      setStatusMsg(`新增失敗：${error.message}`);
-    } else {
-      setStatusMsg('書籍新增成功，已寫入稽核日誌。');
-      setNewTitle('');
-      setNewAuthor('');
-      setNewIsbn('');
-      loadBooks();
+    try {
+      const copies = Array.from({ length: Number(bookForm.copyCount) }, (_, i) => ({
+        barcode: `${bookForm.isbn}-C${i + 1}`,
+        location: bookForm.location
+      }));
+      await libraryService.createBookWithCopies(
+        { ...bookForm, tags: bookForm.tags.split(',').map(t => t.trim()) },
+        copies
+      );
+      setMessage({ type: 'success', text: `成功建立書目《${bookForm.title}》與 ${copies.length} 筆館藏副本！` });
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.message });
     }
   };
 
-  // 更新書籍 (book.update)
-  const handleToggleAvailability = async (book) => {
-    const { error } = await supabase
-      .from('books')
-      .update({ available: !book.available })
-      .eq('id', book.id);
-    if (error) {
-      setStatusMsg(`更新失敗（後端 RLS 拒絕）：${error.message}`);
-    } else {
-      setStatusMsg(`已更新《${book.title}》館藏狀態。`);
-      loadBooks();
+  const handleBorrow = async () => {
+    try {
+      const res = await libraryService.borrowCopy(readerId, barcode);
+      setMessage({ type: 'success', text: `借閱成功！應還日期：${new Date(res.due_date).toLocaleDateString()}` });
+      setBarcode('');
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.message });
     }
   };
 
-  // 刪除書籍 (book.delete)
-  const handleDeleteBook = async (bookId) => {
-    const { error } = await supabase.from('books').delete().eq('id', bookId);
-    if (error) {
-      setStatusMsg(`刪除失敗（後端 RLS 拒絕）：${error.message}`);
-    } else {
-      setStatusMsg('書籍已刪除。');
-      loadBooks();
+  const handleReturn = async () => {
+    try {
+      const res = await libraryService.returnCopy(barcode);
+      let msg = `歸還成功！逾期天數：${res.overdue_days} 天，罰金：$${res.fine_amount}。`;
+      if (res.next_reserved_user_id) {
+        msg += ` 【注意】本書已有讀者預約，已自動保留並通知第一順位讀者！`;
+      }
+      setMessage({ type: 'info', text: msg });
+      setBarcode('');
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.message });
     }
   };
 
-  // 借閱審核與歸還 (borrow.approve / borrow.return)
-  const handleBorrowStatus = async (borrowId, newStatus) => {
-    const { error } = await supabase
-      .from('borrows')
-      .update({ status: newStatus })
-      .eq('id', borrowId);
-    if (error) {
-      setStatusMsg(`借閱操作失敗：${error.message}`);
-    } else {
-      setStatusMsg(`借閱單狀態已變更為：${newStatus}`);
-      loadBorrows();
+  const handleDamage = async () => {
+    try {
+      const res = await libraryService.reportCopyDamaged(barcode);
+      setMessage({
+        type: 'warning',
+        text: `條碼 ${barcode} 已標記損壞。剩餘健康副本：${res.healthy_copies_remaining} 本，自動取消超額預約數：${res.cancelled_reservation_ids.length} 筆。`
+      });
+    } catch (err) {
+      setMessage({ type: 'danger', text: err.message });
     }
   };
-
-  // 修改系統設定 (system.settings)
-  const handleUpdateSettings = async (e) => {
-    e.preventDefault();
-    const { error } = await supabase
-      .from('system_settings')
-      .update({ value: { days: Number(maxBorrowDays) } })
-      .eq('key', 'max_borrow_days');
-    if (error) {
-      setStatusMsg(`系統設定儲存失敗（後端 RLS 拒絕）：${error.message}`);
-    } else {
-      setStatusMsg('全系統最大借閱天數已更新。');
-    }
-  };
-
-  if (loading) return <div className="container mt-4">載入權限設定中...</div>;
 
   return (
     <div className="container py-4">
-      <div className="d-flex justify-content-between align-items-center mb-3">
-        <h2>館務管理後台</h2>
-        <span className="badge bg-primary fs-6">當前角色：{ROLE_LABELS[role]}</span>
-      </div>
+      <h2 className="mb-4">館員業務作業中心</h2>
 
-      {statusMsg && (
-        <div className="alert alert-info alert-dismissible fade show">
-          {statusMsg}
-          <button type="button" className="btn-close" onClick={() => setStatusMsg('')}></button>
-        </div>
+      {message && (
+        <div className={`alert alert-${message.type}`}>{message.text}</div>
       )}
 
-      {/* 區塊 1：書籍管理 */}
-      <div className="card mb-4">
-        <div className="card-header fw-bold">書籍館藏管理</div>
-        <div className="card-body">
-          <PermissionGuard permission="book.create">
-            <form className="row g-2 mb-3" onSubmit={handleCreateBook}>
-              <div className="col-md-4">
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="輸入書名 *"
-                  value={newTitle}
-                  onChange={(e) => setNewTitle(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="col-md-3">
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="輸入作者"
-                  value={newAuthor}
-                  onChange={(e) => setNewAuthor(e.target.value)}
-                />
-              </div>
-              <div className="col-md-3">
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="輸入 ISBN *"
-                  value={newIsbn}
-                  onChange={(e) => setNewIsbn(e.target.value)}
-                  required
-                />
-              </div>
-              <div className="col-md-2">
-                <button type="submit" className="btn btn-success w-100">
-                  + 新增書籍
-                </button>
-              </div>
-            </form>
-          </PermissionGuard>
+      <ul className="nav nav-tabs mb-4">
+        <li className="nav-item">
+          <button className={`nav-link ${activeTab === 'circulation' ? 'active' : ''}`} onClick={() => setActiveTab('circulation')}>
+            借閱 / 歸還 / 損壞處理
+          </button>
+        </li>
+        <li className="nav-item">
+          <button className={`nav-link ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => setActiveTab('catalog')}>
+            新增書目與館藏副本
+          </button>
+        </li>
+      </ul>
 
-          <table className="table table-bordered align-middle">
-            <thead>
-              <tr>
-                <th>書名</th>
-                <th>作者</th>
-                <th>ISBN</th>
-                <th>狀態</th>
-                <th>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {books.map((book) => (
-                <tr key={book.id}>
-                  <td>{book.title}</td>
-                  <td>{book.author}</td>
-                  <td>{book.isbn}</td>
-                  <td>{book.available ? '在館可借' : '已借出'}</td>
-                  <td className="d-flex gap-2">
-                    <PermissionGuard permission="book.update">
-                      <button
-                        className="btn btn-sm btn-outline-primary"
-                        onClick={() => handleToggleAvailability(book)}
-                      >
-                        切換狀態
-                      </button>
-                    </PermissionGuard>
-
-                    <PermissionGuard
-                      permission="book.delete"
-                      fallback={<span className="text-muted small align-self-center">無刪除權限</span>}
-                    >
-                      <button
-                        className="btn btn-sm btn-danger"
-                        onClick={() => handleDeleteBook(book.id)}
-                      >
-                        刪除書籍
-                      </button>
-                    </PermissionGuard>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      </div>
-
-      {/* 區塊 2：借閱審核與歸還 */}
-      <PermissionGuard permission="borrow.approve">
-        <div className="card mb-4">
-          <div className="card-header fw-bold">借閱申請審核與歸還作業</div>
-          <div className="card-body">
-            <table className="table table-sm">
-              <thead>
-                <tr>
-                  <th>借閱單號</th>
-                  <th>書籍 ID</th>
-                  <th>目前狀態</th>
-                  <th>審核 / 歸還操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {borrows.map((item) => (
-                  <tr key={item.id}>
-                    <td>{item.id}</td>
-                    <td>{item.book_id}</td>
-                    <td>{item.status}</td>
-                    <td className="d-flex gap-2">
-                      <PermissionGuard permission="borrow.approve">
-                        <button
-                          className="btn btn-sm btn-warning"
-                          onClick={() => handleBorrowStatus(item.id, 'approved')}
-                        >
-                          核准借閱
-                        </button>
-                      </PermissionGuard>
-                      <PermissionGuard permission="borrow.return">
-                        <button
-                          className="btn btn-sm btn-info"
-                          onClick={() => handleBorrowStatus(item.id, 'returned')}
-                        >
-                          辦理歸還
-                        </button>
-                      </PermissionGuard>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+      {activeTab === 'circulation' ? (
+        <div className="card p-4">
+          <div className="mb-3">
+            <label className="form-label">讀者 UUID（借書時必填）</label>
+            <input type="text" className="form-control" value={readerId} onChange={e => setReaderId(e.target.value)} placeholder="掃描讀者證條碼..." />
+          </div>
+          <div className="mb-3">
+            <label className="form-label">館藏條碼 (BookCopy Barcode)</label>
+            <input type="text" className="form-control" value={barcode} onChange={e => setBarcode(e.target.value)} placeholder="掃描書籍條碼..." />
+          </div>
+          <div className="d-flex gap-2">
+            <button className="btn btn-primary" onClick={handleBorrow}>確認借出</button>
+            <button className="btn btn-success" onClick={handleReturn}>確認歸還</button>
+            <button className="btn btn-outline-danger ms-auto" onClick={handleDamage}>回報館藏損壞</button>
           </div>
         </div>
-      </PermissionGuard>
-
-      {/* 區塊 3：全系統設定 */}
-      <PermissionGuard
-        permission="system.settings"
-        fallback={
-          <div className="alert alert-secondary">
-            系統底層參數設定僅限超級管理員 (Super Admin) 存取。
+      ) : (
+        <form className="card p-4" onSubmit={handleCreateBook}>
+          <div className="row g-3">
+            <div className="col-md-4">
+              <label className="form-label">ISBN</label>
+              <input required className="form-control" value={bookForm.isbn} onChange={e => setBookForm({ ...bookForm, isbn: e.target.value })} />
+            </div>
+            <div className="col-md-8">
+              <label className="form-label">書名</label>
+              <input required className="form-control" value={bookForm.title} onChange={e => setBookForm({ ...bookForm, title: e.target.value })} />
+            </div>
+            <div className="col-md-6">
+              <label className="form-label">作者</label>
+              <input required className="form-control" value={bookForm.author} onChange={e => setBookForm({ ...bookForm, author: e.target.value })} />
+            </div>
+            <div className="col-md-6">
+              <label className="form-label">出版社</label>
+              <input className="form-control" value={bookForm.publisher} onChange={e => setBookForm({ ...bookForm, publisher: e.target.value })} />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">分類</label>
+              <input className="form-control" value={bookForm.category} onChange={e => setBookForm({ ...bookForm, category: e.target.value })} />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">上架副本數量</label>
+              <input type="number" min="1" max="50" className="form-control" value={bookForm.copyCount} onChange={e => setBookForm({ ...bookForm, copyCount: e.target.value })} />
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">預設館藏架位</label>
+              <input className="form-control" value={bookForm.location} onChange={e => setBookForm({ ...bookForm, location: e.target.value })} />
+            </div>
           </div>
-        }
-      >
-        <div className="card border-danger mb-4">
-          <div className="card-header bg-danger text-white fw-bold">全系統參數設定 (Super Admin 專屬)</div>
-          <div className="card-body">
-            <form className="row g-2 align-items-center" onSubmit={handleUpdateSettings}>
-              <div className="col-auto">
-                <label className="col-form-label">全館預設最大借閱天數：</label>
-              </div>
-              <div className="col-auto">
-                <input
-                  type="number"
-                  className="form-control"
-                  value={maxBorrowDays}
-                  onChange={(e) => setMaxBorrowDays(e.target.value)}
-                />
-              </div>
-              <div className="col-auto">
-                <button type="submit" className="btn btn-danger">儲存系統設定</button>
-              </div>
-            </form>
-          </div>
-        </div>
-      </PermissionGuard>
-
-      {/* 區塊 4：操作稽核紀錄 */}
-      <PermissionGuard permission="audit.read">
-        <div className="card">
-          <div className="card-header fw-bold">系統重要操作稽核紀錄 (Audit Logs)</div>
-          <div className="card-body">
-            <table className="table table-striped table-sm">
-              <thead>
-                <tr>
-                  <th>時間</th>
-                  <th>操作者</th>
-                  <th>動作</th>
-                  <th>資料表</th>
-                  <th>紀錄 ID</th>
-                </tr>
-              </thead>
-              <tbody>
-                {auditLogs.map((log) => (
-                  <tr key={log.id}>
-                    <td>{new Date(log.created_at).toLocaleString()}</td>
-                    <td>{log.operator_email}</td>
-                    <td>{log.action}</td>
-                    <td>{log.table_name}</td>
-                    <td>{log.record_id}</td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      </PermissionGuard>
+          <button type="submit" className="btn btn-primary mt-4">建立書目並產生副本條碼</button>
+        </form>
+      )}
     </div>
   );
 }
