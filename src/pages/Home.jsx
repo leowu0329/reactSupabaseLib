@@ -1,32 +1,22 @@
 import React, { useEffect, useState } from 'react';
-import { supabase } from '../lib/supabase';
+import { useLibraryStore } from '../store/useLibraryStore';
+import { libraryService } from '../lib/libraryService';
 import AppModal from '../components/AppModal';
 
 export default function Home({ user }) {
-  const [books, setBooks] = useState([]);
+  const books = useLibraryStore((state) => state.books);
+  const loading = useLibraryStore((state) => state.booksLoading);
+  const fetchBooks = useLibraryStore((state) => state.fetchBooks);
+  const pushNotification = useLibraryStore((state) => state.pushNotification);
+
   const [searchTerm, setSearchTerm] = useState('');
-  const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState({ show: false, title: '', message: '', type: 'info', onConfirm: null });
 
-  const fetchBooks = async () => {
-    setLoading(true);
-    const { data, error } = await supabase
-      .from('books')
-      .select(`
-        *,
-        book_copies (id, barcode, status)
-      `)
-      .order('created_at', { ascending: false });
-
-    if (!error && data) {
-      setBooks(data);
-    }
-    setLoading(false);
-  };
-
   useEffect(() => {
-    fetchBooks();
-  }, []);
+    fetchBooks().catch((err) => {
+      setModal({ show: true, title: '載入失敗', message: err.message, type: 'danger' });
+    });
+  }, [fetchBooks]);
 
   const handleBorrowClick = (book) => {
     if (!user) {
@@ -39,7 +29,7 @@ export default function Home({ user }) {
       return;
     }
 
-    const availableCopy = book.book_copies.find((c) => c.status === 'available');
+    const availableCopy = (book.book_copies || []).find((c) => c.status === 'available');
     if (!availableCopy) return;
 
     setModal({
@@ -47,31 +37,25 @@ export default function Home({ user }) {
       title: '確認借閱',
       message: `確定要借閱《${book.title}》（館藏條碼：${availableCopy.barcode}）嗎？借期為 14 天。`,
       type: 'info',
-      onConfirm: () => executeBorrow(availableCopy.id, book.title),
+      onConfirm: () => executeBorrow(availableCopy.barcode, book.title),
     });
   };
 
-  const executeBorrow = async (copyId, bookTitle) => {
+  const executeBorrow = async (barcode, bookTitle) => {
     try {
-      // 1. 建立借閱紀錄
-      const { error: borrowError } = await supabase.from('borrow_records').insert({
-        user_id: user.id,
-        copy_id: copyId,
-      });
-      if (borrowError) throw borrowError;
-
-      // 2. 更新副本狀態為 borrowed
-      const { error: copyError } = await supabase
-        .from('book_copies')
-        .update({ status: 'borrowed' })
-        .eq('id', copyId);
-      if (copyError) throw copyError;
-
+      await libraryService.ensureMemberProfile(user.id, user.email);
+      const res = await libraryService.borrowCopy(user.id, barcode, 14, user.id);
       await fetchBooks();
+
+      pushNotification({
+        title: '借閱成功',
+        message: `已借閱《${bookTitle}》（條碼：${barcode}）`,
+      });
+
       setModal({
         show: true,
         title: '借閱成功',
-        message: `您已成功借閱《${bookTitle}》，請至「我的借閱」查看歸還期限。`,
+        message: `您已成功借閱《${bookTitle}》，應還日期：${new Date(res.due_date).toLocaleDateString()}。`,
         type: 'success',
       });
     } catch (err) {
@@ -84,19 +68,21 @@ export default function Home({ user }) {
     }
   };
 
-  const filteredBooks = books.filter(
-    (b) =>
-      b.title.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      b.author.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      b.isbn.includes(searchTerm)
-  );
+  const filteredBooks = books.filter((b) => {
+    const kw = searchTerm.toLowerCase();
+    return (
+      (b.title || '').toLowerCase().includes(kw) ||
+      (b.author_names || '').toLowerCase().includes(kw) ||
+      (b.isbn || '').includes(searchTerm)
+    );
+  });
 
   return (
     <div className="container pb-5">
       <div className="row mb-4 align-items-center">
         <div className="col-md-6">
           <h2 className="fw-bold mb-0">
-            <i className="fa-solid fa-books me-2 text-primary"></i>館藏目錄
+            <i className="fa-solid fa-book me-2 text-primary"></i>館藏目錄
           </h2>
         </div>
         <div className="col-md-6 mt-3 mt-md-0">
@@ -122,8 +108,8 @@ export default function Home({ user }) {
       ) : (
         <div className="row g-4">
           {filteredBooks.map((book) => {
-            const availableCount = book.book_copies.filter((c) => c.status === 'available').length;
-            const totalCount = book.book_copies.length;
+            const availableCount = book.available_copies ?? 0;
+            const totalCount = book.total_copies ?? 0;
 
             return (
               <div className="col-sm-6 col-md-4 col-lg-3" key={book.id}>
@@ -132,15 +118,17 @@ export default function Home({ user }) {
                     src={book.cover_url || 'https://placehold.co/300x420?text=No+Cover'}
                     className="card-img-top object-fit-cover"
                     alt={book.title}
-                    style={{ height: '260px' }}
+                    style={{ height: '240px' }}
                   />
                   <div className="card-body d-flex flex-column">
-                    <span className="badge bg-secondary align-self-start mb-2">{book.category}</span>
+                    <span className="badge bg-secondary align-self-start mb-2">
+                      {book.category_name || '一般圖書'}
+                    </span>
                     <h5 className="card-title fw-bold text-truncate" title={book.title}>
                       {book.title}
                     </h5>
                     <p className="card-text text-muted small mb-1">
-                      <i className="fa-solid fa-pen-nib me-1"></i> {book.author}
+                      <i className="fa-solid fa-pen-nib me-1"></i> {book.author_names || '未知作者'}
                     </p>
                     <p className="card-text text-muted small mb-3">
                       <i className="fa-solid fa-barcode me-1"></i> {book.isbn}
