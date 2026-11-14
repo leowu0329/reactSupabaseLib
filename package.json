@@ -8,7 +8,10 @@
     "build": "vite build",
     "lint": "oxlint",
     "preview": "vite preview",
-    "test:conn": "node test/connection.test.js"
+    "test:conn": "node test/connection.test.js",
+    "test:rbac": "node --env-file=.env test/rbac.test.js",
+    "test:workflow": "node --env-file=.env test/workflow.test.js",
+    "test:db": "node --env-file=.env test/database_architecture.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",

@@ -3,78 +3,87 @@ import { libraryService } from '../lib/libraryService';
 import { supabase } from '../lib/supabase';
 
 export default function MyBorrows() {
-  const [borrows, setBorrows] = useState([]);
-  const [reservations, setReservations] = useState([]);
+  const [loans, setLoans] = useState([]);
+  const [loading, setLoading] = useState(true);
 
-  const fetchPersonalRecords = async () => {
+  const fetchRecords = async () => {
+    setLoading(true);
     const { data: authData } = await supabase.auth.getUser();
     if (!authData?.user) return;
-    const [bList, rList] = await Promise.all([
-      libraryService.getUserBorrows(authData.user.id),
-      libraryService.getUserReservations(authData.user.id)
-    ]);
-    setBorrows(bList);
-    setReservations(rList);
+
+    const member = await libraryService.ensureMemberProfile(authData.user.id, authData.user.email);
+    const history = await libraryService.getMemberLoanHistory(member.id);
+    setLoans(history || []);
+    setLoading(false);
   };
 
-  useEffect(() => { fetchPersonalRecords(); }, []);
+  useEffect(() => {
+    fetchRecords();
+  }, []);
 
-  const handleCancelReservation = async (resId) => {
-    await libraryService.cancelReservation(resId);
-    fetchPersonalRecords();
-  };
+  if (loading) {
+    return (
+      <div className="container py-5 text-center">
+        <div className="spinner-border text-primary" role="status"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="container py-4">
-      <h3 className="mb-3">我的借閱紀錄</h3>
-      <table className="table table-bordered mb-5">
-        <thead>
-          <tr>
-            <th>書名</th>
-            <th>副本條碼</th>
-            <th>應還日期</th>
-            <th>狀態 / 罰金</th>
-          </tr>
-        </thead>
-        <tbody>
-          {borrows.map(b => (
-            <tr key={b.id}>
-              <td>{b.book_copies?.books?.title}</td>
-              <td>{b.book_copies?.barcode}</td>
-              <td>{new Date(b.due_date).toLocaleDateString()}</td>
-              <td>{b.status === 'active' ? '借閱中' : `已歸還 (罰金 $${b.fine_amount})`}</td>
+      <h3 className="fw-bold mb-3">我的借閱歷史與明細 (不可刪除永久保存)</h3>
+      <div className="table-responsive mb-5">
+        <table className="table table-bordered bg-white align-middle">
+          <thead className="table-light">
+            <tr>
+              <th>借閱單號</th>
+              <th>書名 / ISBN</th>
+              <th>副本條碼</th>
+              <th>應還日期</th>
+              <th>明細狀態</th>
+              <th>逾期罰款與繳費流水</th>
             </tr>
-          ))}
-        </tbody>
-      </table>
-
-      <h3 className="mb-3">我的預約清單</h3>
-      <table className="table table-bordered">
-        <thead>
-          <tr>
-            <th>書名</th>
-            <th>預約狀態</th>
-            <th>取書期限</th>
-            <th>操作</th>
-          </tr>
-        </thead>
-        <tbody>
-          {reservations.map(r => (
-            <tr key={r.id}>
-              <td>{r.books?.title}</td>
-              <td>{r.status}</td>
-              <td>{r.pickup_deadline ? new Date(r.pickup_deadline).toLocaleString() : '排隊候補中'}</td>
-              <td>
-                {['pending', 'ready_for_pickup'].includes(r.status) && (
-                  <button className="btn btn-sm btn-danger" onClick={() => handleCancelReservation(r.id)}>
-                    取消預約
-                  </button>
-                )}
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+          </thead>
+          <tbody>
+            {loans.flatMap((loan) =>
+              (loan.loan_items || []).map((item) => (
+                <tr key={item.id}>
+                  <td className="small text-muted">{loan.loan_no}</td>
+                  <td>
+                    <div className="fw-bold">{item.book_copies?.books?.title}</div>
+                    <small className="text-muted">{item.book_copies?.books?.isbn}</small>
+                  </td>
+                  <td><code>{item.book_copies?.barcode}</code></td>
+                  <td>{new Date(item.due_date).toLocaleDateString()}</td>
+                  <td>
+                    <span className={`badge ${item.status === 'returned' ? 'bg-success' : 'bg-primary'}`}>
+                      {item.status === 'returned' ? '已歸還' : '借閱中'}
+                    </span>
+                  </td>
+                  <td>
+                    {item.fines && item.fines.length > 0 ? (
+                      item.fines.map((f) => (
+                        <div key={f.id} className="small">
+                          <span className="text-danger fw-bold">
+                            罰款 NT$ {f.amount} ({f.status})
+                          </span>
+                          {(f.payments || []).map((p) => (
+                            <div key={p.id} className="text-muted">
+                              └ [{p.transaction_type}] NT$ {p.amount} ({p.receipt_no})
+                            </div>
+                          ))}
+                        </div>
+                      ))
+                    ) : (
+                      <span className="text-muted small">無罰款</span>
+                    )}
+                  </td>
+                </tr>
+              ))
+            )}
+          </tbody>
+        </table>
+      </div>
     </div>
   );
 }

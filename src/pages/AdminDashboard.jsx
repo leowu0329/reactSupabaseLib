@@ -5,27 +5,34 @@ export default function AdminDashboard() {
   const [activeTab, setActiveTab] = useState('circulation');
   const [message, setMessage] = useState(null);
 
-  // 圖書建檔狀態
   const [bookForm, setBookForm] = useState({
-    isbn: '', title: '', author: '', publisher: '', category: '資訊科學', tags: 'JavaScript,前端', copyCount: 2, location: 'A區-1架'
+    isbn: '',
+    title: '',
+    author: '',
+    publisher: '',
+    categoryCode: '800',
+    category: '程式設計與資訊',
+    copyCount: 2,
   });
 
-  // 借還書掃碼狀態
-  const [readerId, setReaderId] = useState('');
+  const [readerUserId, setReaderUserId] = useState('');
   const [barcode, setBarcode] = useState('');
+
+  const [fineId, setFineId] = useState('');
+  const [txType, setTxType] = useState('payment');
+  const [txAmount, setTxAmount] = useState('');
 
   const handleCreateBook = async (e) => {
     e.preventDefault();
     try {
       const copies = Array.from({ length: Number(bookForm.copyCount) }, (_, i) => ({
-        barcode: `${bookForm.isbn}-C${i + 1}`,
-        location: bookForm.location
+        barcode: `${bookForm.isbn}-C${String(i + 1).padStart(3, '0')}`,
       }));
-      await libraryService.createBookWithCopies(
-        { ...bookForm, tags: bookForm.tags.split(',').map(t => t.trim()) },
-        copies
-      );
-      setMessage({ type: 'success', text: `成功建立書目《${bookForm.title}》與 ${copies.length} 筆館藏副本！` });
+      const res = await libraryService.createNormalizedBookWithCopies(bookForm, copies);
+      setMessage({
+        type: 'success',
+        text: `已建立正規化書目《${res.book.title}》（出版社：${res.publisher.name}、作者：${res.author.name}）及 ${res.copies.length} 筆獨立副本！`,
+      });
     } catch (err) {
       setMessage({ type: 'danger', text: err.message });
     }
@@ -33,8 +40,11 @@ export default function AdminDashboard() {
 
   const handleBorrow = async () => {
     try {
-      const res = await libraryService.borrowCopy(readerId, barcode);
-      setMessage({ type: 'success', text: `借閱成功！應還日期：${new Date(res.due_date).toLocaleDateString()}` });
+      const res = await libraryService.borrowCopy(readerUserId, barcode);
+      setMessage({
+        type: 'success',
+        text: `交易借出成功！借閱明細 ID：${res.loan_item_id}，應還日期：${new Date(res.due_date).toLocaleDateString()}`,
+      });
       setBarcode('');
     } catch (err) {
       setMessage({ type: 'danger', text: err.message });
@@ -44,23 +54,22 @@ export default function AdminDashboard() {
   const handleReturn = async () => {
     try {
       const res = await libraryService.returnCopy(barcode);
-      let msg = `歸還成功！逾期天數：${res.overdue_days} 天，罰金：$${res.fine_amount}。`;
-      if (res.next_reserved_user_id) {
-        msg += ` 【注意】本書已有讀者預約，已自動保留並通知第一順位讀者！`;
-      }
-      setMessage({ type: 'info', text: msg });
+      let text = `歸還成功！逾期 ${res.overdue_days} 天，產生罰款 NT$ ${res.fine_amount}。`;
+      if (res.fine_id) text += ` (罰款單號 ID: ${res.fine_id})`;
+      setMessage({ type: 'info', text });
       setBarcode('');
     } catch (err) {
       setMessage({ type: 'danger', text: err.message });
     }
   };
 
-  const handleDamage = async () => {
+  const handleFinanceTx = async (e) => {
+    e.preventDefault();
     try {
-      const res = await libraryService.reportCopyDamaged(barcode);
+      const res = await libraryService.payOrAdjustFine(fineId, txType, Number(txAmount), 'cash');
       setMessage({
-        type: 'warning',
-        text: `條碼 ${barcode} 已標記損壞。剩餘健康副本：${res.healthy_copies_remaining} 本，自動取消超額預約數：${res.cancelled_reservation_ids.length} 筆。`
+        type: 'success',
+        text: `帳務流水已寫入！交易單號：${res.payment_id}，目前累計實收：NT$ ${res.net_paid}，罰款狀態：${res.fine_status}`,
       });
     } catch (err) {
       setMessage({ type: 'danger', text: err.message });
@@ -69,74 +78,163 @@ export default function AdminDashboard() {
 
   return (
     <div className="container py-4">
-      <h2 className="mb-4">館員業務作業中心</h2>
+      <h2 className="fw-bold mb-4">館務管理與資料庫交易作業中心</h2>
 
-      {message && (
-        <div className={`alert alert-${message.type}`}>{message.text}</div>
-      )}
+      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
 
       <ul className="nav nav-tabs mb-4">
         <li className="nav-item">
-          <button className={`nav-link ${activeTab === 'circulation' ? 'active' : ''}`} onClick={() => setActiveTab('circulation')}>
-            借閱 / 歸還 / 損壞處理
+          <button
+            className={`nav-link ${activeTab === 'circulation' ? 'active' : ''}`}
+            onClick={() => setActiveTab('circulation')}
+          >
+            流通借還（交易鎖定）
           </button>
         </li>
         <li className="nav-item">
-          <button className={`nav-link ${activeTab === 'catalog' ? 'active' : ''}`} onClick={() => setActiveTab('catalog')}>
-            新增書目與館藏副本
+          <button
+            className={`nav-link ${activeTab === 'catalog' ? 'active' : ''}`}
+            onClick={() => setActiveTab('catalog')}
+          >
+            正規化編目與副本建檔
+          </button>
+        </li>
+        <li className="nav-item">
+          <button
+            className={`nav-link ${activeTab === 'finance' ? 'active' : ''}`}
+            onClick={() => setActiveTab('finance')}
+          >
+            罰款繳費與帳務流水
           </button>
         </li>
       </ul>
 
-      {activeTab === 'circulation' ? (
-        <div className="card p-4">
+      {activeTab === 'circulation' && (
+        <div className="card p-4 shadow-sm border-0">
           <div className="mb-3">
-            <label className="form-label">讀者 UUID（借書時必填）</label>
-            <input type="text" className="form-control" value={readerId} onChange={e => setReaderId(e.target.value)} placeholder="掃描讀者證條碼..." />
+            <label className="form-label">讀者 User UUID（借書必填）</label>
+            <input
+              type="text"
+              className="form-control"
+              value={readerUserId}
+              onChange={(e) => setReaderUserId(e.target.value)}
+              placeholder="輸入讀者帳號 UUID..."
+            />
           </div>
           <div className="mb-3">
-            <label className="form-label">館藏條碼 (BookCopy Barcode)</label>
-            <input type="text" className="form-control" value={barcode} onChange={e => setBarcode(e.target.value)} placeholder="掃描書籍條碼..." />
+            <label className="form-label">實體副本條碼 (book_copies.barcode)</label>
+            <input
+              type="text"
+              className="form-control"
+              value={barcode}
+              onChange={(e) => setBarcode(e.target.value)}
+              placeholder="掃描書籍條碼..."
+            />
           </div>
           <div className="d-flex gap-2">
-            <button className="btn btn-primary" onClick={handleBorrow}>確認借出</button>
+            <button className="btn btn-primary" onClick={handleBorrow}>確認借出 (FOR UPDATE 鎖定)</button>
             <button className="btn btn-success" onClick={handleReturn}>確認歸還</button>
-            <button className="btn btn-outline-danger ms-auto" onClick={handleDamage}>回報館藏損壞</button>
           </div>
         </div>
-      ) : (
-        <form className="card p-4" onSubmit={handleCreateBook}>
+      )}
+
+      {activeTab === 'catalog' && (
+        <form className="card p-4 shadow-sm border-0" onSubmit={handleCreateBook}>
           <div className="row g-3">
             <div className="col-md-4">
               <label className="form-label">ISBN</label>
-              <input required className="form-control" value={bookForm.isbn} onChange={e => setBookForm({ ...bookForm, isbn: e.target.value })} />
+              <input
+                required
+                className="form-control"
+                value={bookForm.isbn}
+                onChange={(e) => setBookForm({ ...bookForm, isbn: e.target.value })}
+              />
             </div>
             <div className="col-md-8">
               <label className="form-label">書名</label>
-              <input required className="form-control" value={bookForm.title} onChange={e => setBookForm({ ...bookForm, title: e.target.value })} />
-            </div>
-            <div className="col-md-6">
-              <label className="form-label">作者</label>
-              <input required className="form-control" value={bookForm.author} onChange={e => setBookForm({ ...bookForm, author: e.target.value })} />
-            </div>
-            <div className="col-md-6">
-              <label className="form-label">出版社</label>
-              <input className="form-control" value={bookForm.publisher} onChange={e => setBookForm({ ...bookForm, publisher: e.target.value })} />
+              <input
+                required
+                className="form-control"
+                value={bookForm.title}
+                onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })}
+              />
             </div>
             <div className="col-md-4">
-              <label className="form-label">分類</label>
-              <input className="form-control" value={bookForm.category} onChange={e => setBookForm({ ...bookForm, category: e.target.value })} />
+              <label className="form-label">作者 (寫入 authors 與 book_authors)</label>
+              <input
+                required
+                className="form-control"
+                value={bookForm.author}
+                onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })}
+              />
             </div>
             <div className="col-md-4">
-              <label className="form-label">上架副本數量</label>
-              <input type="number" min="1" max="50" className="form-control" value={bookForm.copyCount} onChange={e => setBookForm({ ...bookForm, copyCount: e.target.value })} />
+              <label className="form-label">出版社 (寫入 publishers)</label>
+              <input
+                required
+                className="form-control"
+                value={bookForm.publisher}
+                onChange={(e) => setBookForm({ ...bookForm, publisher: e.target.value })}
+              />
             </div>
-            <div className="col-md-4">
-              <label className="form-label">預設館藏架位</label>
-              <input className="form-control" value={bookForm.location} onChange={e => setBookForm({ ...bookForm, location: e.target.value })} />
+            <div className="col-md-2">
+              <label className="form-label">分類號</label>
+              <input
+                required
+                className="form-control"
+                value={bookForm.categoryCode}
+                onChange={(e) => setBookForm({ ...bookForm, categoryCode: e.target.value })}
+              />
+            </div>
+            <div className="col-md-2">
+              <label className="form-label">副本數</label>
+              <input
+                type="number"
+                min="1"
+                max="50"
+                className="form-control"
+                value={bookForm.copyCount}
+                onChange={(e) => setBookForm({ ...bookForm, copyCount: e.target.value })}
+              />
             </div>
           </div>
-          <button type="submit" className="btn btn-primary mt-4">建立書目並產生副本條碼</button>
+          <button type="submit" className="btn btn-primary mt-4">建立正規化書目與副本</button>
+        </form>
+      )}
+
+      {activeTab === 'finance' && (
+        <form className="card p-4 shadow-sm border-0" onSubmit={handleFinanceTx}>
+          <div className="row g-3">
+            <div className="col-md-5">
+              <label className="form-label">罰款紀錄 UUID (fines.id)</label>
+              <input
+                required
+                className="form-control"
+                value={fineId}
+                onChange={(e) => setFineId(e.target.value)}
+              />
+            </div>
+            <div className="col-md-3">
+              <label className="form-label">交易類型</label>
+              <select className="form-select" value={txType} onChange={(e) => setTxType(e.target.value)}>
+                <option value="payment">繳費 (payment)</option>
+                <option value="waiver">折抵減免 (waiver)</option>
+                <option value="refund">退款 (refund)</option>
+              </select>
+            </div>
+            <div className="col-md-4">
+              <label className="form-label">交易金額 (NT$)</label>
+              <input
+                type="number"
+                min="1"
+                required
+                className="form-control"
+                value={txAmount}
+                onChange={(e) => setTxAmount(e.target.value)}
+              />
+            </div>
+          </div>
+          <button type="submit" className="btn btn-warning mt-4 fw-bold">寫入獨立帳務交易流水</button>
         </form>
       )}
     </div>
