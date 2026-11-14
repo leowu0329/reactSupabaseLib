@@ -1,8 +1,11 @@
 import React from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { supabase } from '../lib/supabase';
+import { usePermission } from '../hooks/usePermission';
+import { ROLE_LABELS } from '../config/permissions';
 
-export default function Navbar({ user, profile }) {
+export default function Navbar() {
+  const { user, role, can } = usePermission();
   const navigate = useNavigate();
 
   const handleLogout = async () => {
@@ -10,63 +13,54 @@ export default function Navbar({ user, profile }) {
     navigate('/login');
   };
 
+  // 具備書籍新增/修改、借閱審核或系統設定權限者可進入後台管理
+  const canAccessAdmin =
+    can('book.create') ||
+    can('book.update') ||
+    can('borrow.approve') ||
+    can('system.settings');
+
   return (
-    <nav className="navbar navbar-expand-lg navbar-dark bg-dark shadow-sm mb-4">
-      <div className="container">
-        <Link className="navbar-brand fw-bold" to="/">
-          <i className="fa-solid fa-book-open-reader me-2 text-info"></i>
-          智慧圖書館
-        </Link>
-        <button
-          className="navbar-toggler"
-          type="button"
-          data-bs-toggle="collapse"
-          data-bs-target="#navbarNav"
-        >
-          <span className="navbar-toggler-icon"></span>
-        </button>
-        <div className="collapse navbar-collapse" id="navbarNav">
-          <ul className="navbar-nav me-auto">
+    <nav className="navbar navbar-expand-lg navbar-dark bg-dark px-4">
+      <Link className="navbar-brand fw-bold" to="/">
+        <i className="fas fa-book-reader me-2"></i>圖書館管理系統
+      </Link>
+
+      <div className="collapse navbar-collapse">
+        <ul className="navbar-nav me-auto">
+          <li className="nav-item">
+            <Link className="nav-link" to="/">公開書目查詢</Link>
+          </li>
+
+          {user && (
             <li className="nav-item">
-              <Link className="nav-link" to="/">
-                <i className="fa-solid fa-magnifying-glass me-1"></i> 館藏查詢
+              <Link className="nav-link" to="/my-borrows">我的借閱紀錄</Link>
+            </li>
+          )}
+
+          {canAccessAdmin && (
+            <li className="nav-item">
+              <Link className="nav-link text-warning" to="/admin">
+                <i className="fas fa-shield-alt me-1"></i>館務管理後台
               </Link>
             </li>
-            {user && (
-              <li className="nav-item">
-                <Link className="nav-link" to="/my-borrows">
-                  <i className="fa-solid fa-bookmark me-1"></i> 我的借閱
-                </Link>
-              </li>
-            )}
-            {profile?.role === 'admin' && (
-              <li className="nav-item">
-                <Link className="nav-link text-warning fw-medium" to="/admin">
-                  <i className="fa-solid fa-screwdriver-wrench me-1"></i> 館員後台管理
-                </Link>
-              </li>
-            )}
-          </ul>
-          <div className="d-flex align-items-center">
-            {user ? (
-              <>
-                <span className="text-light me-3 small">
-                  <i className="fa-solid fa-user-circle me-1"></i>
-                  {profile?.full_name || user.email}
-                  {profile?.role === 'admin' && (
-                    <span className="badge bg-warning text-dark ms-2">管理員</span>
-                  )}
-                </span>
-                <button className="btn btn-outline-light btn-sm" onClick={handleLogout}>
-                  <i className="fa-solid fa-right-from-bracket me-1"></i> 登出
-                </button>
-              </>
-            ) : (
-              <Link className="btn btn-info btn-sm fw-medium" to="/login">
-                <i className="fa-solid fa-right-to-bracket me-1"></i> 登入 / 註冊
-              </Link>
-            )}
-          </div>
+          )}
+        </ul>
+
+        <div className="d-flex align-items-center gap-3">
+          <span className="badge bg-info text-dark">
+            身份：{ROLE_LABELS[role] || role}
+          </span>
+
+          {user ? (
+            <button className="btn btn-outline-light btn-sm" onClick={handleLogout}>
+              登出 ({user.email})
+            </button>
+          ) : (
+            <Link className="btn btn-primary btn-sm" to="/login">
+              登入系統
+            </Link>
+          )}
         </div>
       </div>
     </nav>
