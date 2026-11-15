@@ -1,50 +1,37 @@
 import React from 'react';
-import {
-  COPY_STATE_META,
-  COPY_EVENTS,
-  copyStateMachine,
-} from '../config/copyStateMachine';
 
-const EVENT_BUTTON_LABELS = {
-  [COPY_EVENTS.REPORT_DAMAGE]: { label: '登記損壞維修', btnClass: 'btn-outline-warning' },
-  [COPY_EVENTS.REPAIR_COMPLETE]: { label: '維修完成上架', btnClass: 'btn-outline-success' },
-  [COPY_EVENTS.REPORT_LOST]: { label: '登記遺失', btnClass: 'btn-outline-danger' },
-  [COPY_EVENTS.RECOVER_LOST]: { label: '遺失尋獲上架', btnClass: 'btn-outline-success' },
-  [COPY_EVENTS.DISPOSE]: { label: '報廢除帳', btnClass: 'btn-outline-secondary' },
+const STATUS_MAP = {
+  // 館藏副本狀態
+  available: { label: '可借閱', color: 'success' },
+  checked_out: { label: '已借出', color: 'primary' },
+  reserved: { label: '已預約', color: 'warning' },
+  in_transit: { label: '調撥中', color: 'info' },
+  maintenance: { label: '修補中', color: 'secondary' },
+  lost: { label: '已遺失', color: 'danger' },
+  discarded: { label: '已報廢', color: 'dark' },
+
+  // 讀者與帳戶狀態
+  active: { label: '正常啟用', color: 'success' },
+  suspended: { label: '已停權', color: 'danger' },
+  expired: { label: '已過期', color: 'secondary' },
+
+  // 借閱、預約與罰款狀態
+  borrowed: { label: '借閱中', color: 'primary' },
+  returned: { label: '已歸還', color: 'success' },
+  overdue: { label: '已逾期', color: 'danger' },
+  pending: { label: '等待中', color: 'warning' },
+  notified: { label: '已通知取書', color: 'info' },
+  paid: { label: '已繳清', color: 'success' },
+  unpaid: { label: '未繳納', color: 'danger' },
+  approved: { label: '已核准', color: 'success' },
+  received: { label: '已驗收', color: 'success' },
 };
 
-export default function CopyStateBadge({ status, showActions = false, onTriggerEvent }) {
-  const normalized = copyStateMachine.normalize(status);
-  const meta = COPY_STATE_META[normalized] || {
-    label: status,
-    badgeClass: 'bg-secondary',
-    description: '',
-  };
-
-  const allowedEvents = Object.keys(copyStateMachine.getAllowedTransitions(normalized)).filter(
-    (evt) => EVENT_BUTTON_LABELS[evt]
-  );
-
+export default function CopyStateBadge({ status }) {
+  const config = STATUS_MAP[status] || { label: status || '未知', color: 'secondary' };
   return (
-    <div className="d-inline-flex align-items-center flex-wrap gap-2">
-      <span className={`badge ${meta.badgeClass}`} title={meta.description}>
-        {meta.label}
-      </span>
-
-      {showActions &&
-        allowedEvents.map((eventKey) => {
-          const cfg = EVENT_BUTTON_LABELS[eventKey];
-          return (
-            <button
-              key={eventKey}
-              type="button"
-              className={`btn btn-sm ${cfg.btnClass}`}
-              onClick={() => onTriggerEvent?.(eventKey)}
-            >
-              {cfg.label}
-            </button>
-          );
-        })}
-    </div>
+    <span className={`badge rounded-pill bg-${config.color} px-2 py-1`}>
+      {config.label}
+    </span>
   );
 }

@@ -1,175 +1,193 @@
-import React, { useState } from 'react';
-import { circulationService } from '../lib/circulationService';
-import { reservationService } from '../lib/reservationService';
+import React, { useState, useRef, useEffect } from 'react';
+import { checkoutCopy, checkinCopy } from '../lib/circulationService';
+import { useUiStore } from '../store/useUiStore';
+import CopyStateBadge from '../components/CopyStateBadge';
 
-export default function CirculationDesk() {
-  const [mode, setMode] = useState('BORROW'); // 'BORROW' | 'RETURN'
-  const [memberId, setMemberId] = useState('');
-  const [branchId, setBranchId] = useState('');
-  const [barcodeInput, setBarcodeInput] = useState('');
-  const [barcodeQueue, setBarcodeQueue] = useState([]);
-  const [logs, setLogs] = useState([]);
+export default function CirculationDesk({ defaultMode = 'checkout' }) {
+  const [mode, setMode] = useState(defaultMode);
+  const [memberBarcode, setMemberBarcode] = useState('');
+  const [copyBarcode, setCopyBarcode] = useState('');
+  const [errors, setErrors] = useState({});
+  const [recentLogs, setRecentLogs] = useState([]);
   const [loading, setLoading] = useState(false);
 
-  const handleAddBarcode = (e) => {
-    e.preventDefault();
-    const code = barcodeInput.trim();
-    if (!code) return;
-    if (!barcodeQueue.includes(code)) {
-      setBarcodeQueue([...barcodeQueue, code]);
+  const memberInputRef = useRef(null);
+  const copyInputRef = useRef(null);
+  const { showToast } = useUiStore();
+
+  useEffect(() => {
+    setMode(defaultMode);
+  }, [defaultMode]);
+
+  useEffect(() => {
+    if (mode === 'checkout') {
+      memberInputRef.current?.focus();
+    } else {
+      copyInputRef.current?.focus();
     }
-    setBarcodeInput('');
+  }, [mode]);
+
+  const handleMemberKeyDown = (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      if (!memberBarcode.trim()) {
+        setErrors({ memberBarcode: '請掃描或輸入讀者證條碼' });
+        return;
+      }
+      setErrors({});
+      copyInputRef.current?.focus();
+    }
   };
 
-  const handleExecuteBatch = async () => {
-    if (barcodeQueue.length === 0) return;
+  const handleCopySubmit = async (e) => {
+    e.preventDefault();
+    const nextErrors = {};
+    if (mode === 'checkout' && !memberBarcode.trim()) {
+      nextErrors.memberBarcode = '借書前必須先掃描讀者證條碼';
+    }
+    if (!copyBarcode.trim()) {
+      nextErrors.copyBarcode = '請掃描或輸入館藏副本條碼';
+    }
+    if (Object.keys(nextErrors).length > 0) {
+      setErrors(nextErrors);
+      return;
+    }
+
+    setErrors({});
     setLoading(true);
     try {
-      if (mode === 'BORROW') {
-        if (!memberId) throw new Error('請先掃描或輸入讀者 ID');
-        const results = await circulationService.batchBorrow({
-          barcodes: barcodeQueue,
-          memberId,
-          currentBranchId: branchId || null
-        });
-        setLogs((prev) => [...results.map((r) => ({ type: 'BORROW', ...r })), ...prev]);
+      if (mode === 'checkout') {
+        const res = await checkoutCopy({ memberCode: memberBarcode.trim(), barcode: copyBarcode.trim() });
+        showToast(`借出成功！條碼：${copyBarcode}`, 'success');
+        setRecentLogs((prev) => [
+          { id: Date.now(), action: '借出', barcode: copyBarcode, member: memberBarcode, status: 'checked_out', detail: res?.due_date || '已更新借閱期限' },
+          ...prev,
+        ]);
       } else {
-        const results = await circulationService.batchReturn({
-          barcodes: barcodeQueue,
-          returnBranchId: branchId || null
-        });
-        setLogs((prev) => [...results.map((r) => ({ type: 'RETURN', ...r })), ...prev]);
+        const res = await checkinCopy({ barcode: copyBarcode.trim() });
+        showToast(`歸還成功！條碼：${copyBarcode}`, 'success');
+        setRecentLogs((prev) => [
+          { id: Date.now(), action: '歸還', barcode: copyBarcode, member: '-', status: res?.nextStatus || 'available', detail: '已重新上架/通知預約' },
+          ...prev,
+        ]);
       }
-      setBarcodeQueue([]);
+      setCopyBarcode('');
+      copyInputRef.current?.focus();
     } catch (err) {
-      alert(err.message);
+      showToast(err.message || '條碼作業失敗，請檢查館藏或讀者狀態', 'danger');
     } finally {
       setLoading(false);
     }
   };
 
-  const handleRunReservationCleanup = async () => {
-    const expiredCount = await reservationService.expireOverduePickups();
-    alert(`已自動清理 ${expiredCount} 筆逾期未取書的預約紀錄`);
-  };
-
   return (
-    <div className="container py-4">
-      <div className="d-flex justify-content-between align-items-center mb-4">
-        <h2 className="fw-bold">
-          <i className="fa-solid fa-barcode me-2 text-primary"></i>圖書流通櫃台作業
-        </h2>
-        <button className="btn btn-outline-warning" onClick={handleRunReservationCleanup}>
-          <i className="fa-solid fa-clock-rotate-left me-1"></i>清理逾期未取預約
-        </button>
-      </div>
-
-      <div className="btn-group mb-4">
-        <button
-          className={`btn ${mode === 'BORROW' ? 'btn-primary' : 'btn-outline-primary'}`}
-          onClick={() => setMode('BORROW')}
-        >
-          批次掃描借閱
-        </button>
-        <button
-          className={`btn ${mode === 'RETURN' ? 'btn-success' : 'btn-outline-success'}`}
-          onClick={() => setMode('RETURN')}
-        >
-          批次掃描歸還
-        </button>
-      </div>
-
-      <div className="card shadow-sm mb-4">
-        <div className="card-body">
-          <div className="row g-3 mb-3">
-            {mode === 'BORROW' && (
-              <div className="col-md-6">
-                <label className="form-label fw-semibold">讀者 UUID / 掃描讀者證</label>
-                <input
-                  type="text"
-                  className="form-control"
-                  placeholder="輸入讀者 ID..."
-                  value={memberId}
-                  onChange={(e) => setMemberId(e.target.value)}
-                />
-              </div>
-            )}
-            <div className="col-md-6">
-              <label className="form-label fw-semibold">作業分館 ID（留空預設原館）</label>
-              <input
-                type="text"
-                className="form-control"
-                placeholder="輸入分館 UUID..."
-                value={branchId}
-                onChange={(e) => setBranchId(e.target.value)}
-              />
-            </div>
-          </div>
-
-          <form onSubmit={handleAddBarcode} className="d-flex gap-2 mb-3">
-            <input
-              type="text"
-              className="form-control"
-              placeholder="掃描書籍條碼 (如 LIB-123456-001) 後按 Enter..."
-              value={barcodeInput}
-              onChange={(e) => setBarcodeInput(e.target.value)}
-            />
-            <button type="submit" className="btn btn-secondary text-nowrap">
-              加入佇列
-            </button>
-          </form>
-
-          <div className="mb-3">
-            <span className="text-muted small">待處理條碼 ({barcodeQueue.length})：</span>
-            <div className="d-flex flex-wrap gap-2 mt-1">
-              {barcodeQueue.map((code) => (
-                <span key={code} className="badge bg-light text-dark border p-2">
-                  {code}
-                  <button
-                    type="button"
-                    className="btn-close ms-2"
-                    style={{ fontSize: '0.6rem' }}
-                    onClick={() => setBarcodeQueue(barcodeQueue.filter((c) => c !== code))}
-                  ></button>
-                </span>
-              ))}
-            </div>
-          </div>
-
+    <div className="container-fluid px-0">
+      <div className="d-flex justify-content-between align-items-center mb-3">
+        <h4 className="mb-0 fw-bold">
+          <i className="bi bi-upc-scan me-2 text-primary" />
+          條碼流通工作台
+        </h4>
+        <div className="btn-group" role="group" aria-label="切換作業模式">
           <button
-            className="btn btn-primary w-100"
-            disabled={loading || barcodeQueue.length === 0}
-            onClick={handleExecuteBatch}
+            type="button"
+            className={`btn ${mode === 'checkout' ? 'btn-primary' : 'btn-outline-primary'}`}
+            onClick={() => setMode('checkout')}
           >
-            {loading ? '處理中...' : `確認執行批次${mode === 'BORROW' ? '借閱' : '歸還'}`}
+            圖書借出
+          </button>
+          <button
+            type="button"
+            className={`btn ${mode === 'checkin' ? 'btn-success' : 'btn-outline-success'}`}
+            onClick={() => setMode('checkin')}
+          >
+            圖書歸還
           </button>
         </div>
       </div>
 
-      <div className="card shadow-sm">
-        <div className="card-header fw-bold">作業執行結果紀錄</div>
-        <ul className="list-group list-group-flush">
-          {logs.map((log, idx) => (
-            <li key={idx} className="list-group-item d-flex justify-content-between align-items-center">
-              <div>
-                <span className={`badge me-2 ${log.success ? 'bg-success' : 'bg-danger'}`}>
-                  {log.type}
-                </span>
-                <strong>{log.barcode}</strong>
-                {log.success ? (
-                  <span className="ms-2 text-muted">
-                    {log.data.bookTitle}
-                    {log.data.fine && ` | 產生逾期罰款 NT$${log.data.fine.calculated_amount}`}
-                    {log.data.assignedReservation &&
-                      ` | 已自動保留給預約者: ${log.data.assignedReservation.member?.full_name}`}
-                  </span>
-                ) : (
-                  <span className="ms-2 text-danger">{log.error}</span>
-                )}
+      <div className="card shadow-sm border-0 mb-4">
+        <div className="card-body p-4">
+          <form onSubmit={handleCopySubmit} noValidate>
+            <div className="row g-3 align-items-start">
+              {mode === 'checkout' && (
+                <div className="col-md-5">
+                  <label htmlFor="memberBarcodeInput" className="form-label fw-semibold">
+                    1. 讀者證條碼（掃描後自動跳轉）
+                  </label>
+                  <input
+                    id="memberBarcodeInput"
+                    ref={memberInputRef}
+                    type="text"
+                    className={`form-control form-control-lg ${errors.memberBarcode ? 'is-invalid' : ''}`}
+                    placeholder="請掃描讀者證條碼 (例: MEM-2026001)"
+                    value={memberBarcode}
+                    onChange={(e) => setMemberBarcode(e.target.value)}
+                    onKeyDown={handleMemberKeyDown}
+                  />
+                  {errors.memberBarcode && <div className="invalid-feedback">{errors.memberBarcode}</div>}
+                </div>
+              )}
+
+              <div className={mode === 'checkout' ? 'col-md-5' : 'col-md-9'}>
+                <label htmlFor="copyBarcodeInput" className="form-label fw-semibold">
+                  {mode === 'checkout' ? '2. 館藏副本條碼（掃描即自動送出）' : '館藏副本條碼（掃描即自動歸還）'}
+                </label>
+                <input
+                  id="copyBarcodeInput"
+                  ref={copyInputRef}
+                  type="text"
+                  className={`form-control form-control-lg ${errors.copyBarcode ? 'is-invalid' : ''}`}
+                  placeholder="請掃描書籍條碼 (例: BK-10001)"
+                  value={copyBarcode}
+                  onChange={(e) => setCopyBarcode(e.target.value)}
+                />
+                {errors.copyBarcode && <div className="invalid-feedback">{errors.copyBarcode}</div>}
               </div>
-            </li>
-          ))}
-        </ul>
+
+              <div className="col-md-2 d-grid" style={{ marginTop: '2.9rem' }}>
+                <button type="submit" className="btn btn-dark btn-lg" disabled={loading}>
+                  {loading ? '處理中...' : '執行'}
+                </button>
+              </div>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      <div className="card shadow-sm border-0">
+        <div className="card-header bg-white fw-semibold">本次櫃台掃描作業紀錄</div>
+        <div className="table-responsive">
+          <table className="table align-middle mb-0">
+            <thead className="table-light">
+              <tr>
+                <th>作業類型</th>
+                <th>館藏條碼</th>
+                <th>讀者證號</th>
+                <th>更新後狀態</th>
+                <th>備註</th>
+              </tr>
+            </thead>
+            <tbody>
+              {recentLogs.length === 0 ? (
+                <tr>
+                  <td colSpan="5" className="text-center text-muted py-3">
+                    請使用條碼掃描槍開始作業
+                  </td>
+                </tr>
+              ) : (
+                recentLogs.map((log) => (
+                  <tr key={log.id}>
+                    <td><strong>{log.action}</strong></td>
+                    <td><code>{log.barcode}</code></td>
+                    <td>{log.member}</td>
+                    <td><CopyStateBadge status={log.status} /></td>
+                    <td>{log.detail}</td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
   );

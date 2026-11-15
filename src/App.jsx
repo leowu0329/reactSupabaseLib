@@ -1,73 +1,111 @@
-import React, { useEffect } from 'react';
-import { BrowserRouter, Routes, Route } from 'react-router-dom';
-import { supabase } from './lib/supabase';
-import { useLibraryStore } from './store/useLibraryStore';
-import { realtimeService } from './lib/realtimeService';
-import ProtectedRoute from './routes/ProtectedRoute';
-import Navbar from './components/Navbar';
-import Home from './pages/Home';
-import MyBorrows from './pages/MyBorrows';
+import React from 'react';
+import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/AdminDashboard';
-import Login from './pages/Login';
+import CirculationDesk from './pages/CirculationDesk';
+import CatalogManagement from './pages/admin/CatalogManagement';
+import MemberManagement from './pages/admin/MemberManagement';
+import InventoryManager from './pages/admin/InventoryManager';
+import {
+  ReservationManager,
+  OverdueFineManager,
+  ProcurementManager,
+  AnalyticsReports,
+  SystemSettings,
+  GenericModuleListView,
+} from './pages/admin/ModuleViews';
+import CopyStateBadge from './components/CopyStateBadge';
 
 export default function App() {
-  const user = useLibraryStore((state) => state.user);
-  const authLoading = useLibraryStore((state) => state.authLoading);
-  const syncAuthSession = useLibraryStore((state) => state.syncAuthSession);
-  const fetchBooks = useLibraryStore((state) => state.fetchBooks);
-  const pushNotification = useLibraryStore((state) => state.pushNotification);
-
-  useEffect(() => {
-    // 1. 初始化認證 Session
-    supabase.auth.getSession().then(({ data: { session } }) => {
-      syncAuthSession(session?.user ?? null);
-    });
-
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-      syncAuthSession(session?.user ?? null);
-    });
-
-    // 2. 啟動 Supabase Realtime 館藏異動即時通知
-    const copyChannel = realtimeService.subscribeCopyStatus((newCopy, oldCopy) => {
-      if (newCopy?.status !== oldCopy?.status) {
-        pushNotification({
-          title: '館藏狀態即時更新',
-          message: `條碼 ${newCopy.barcode} 狀態已變更為：${newCopy.status}`,
-        });
-        fetchBooks().catch(() => {});
-      }
-    });
-
-    return () => {
-      subscription.unsubscribe();
-      realtimeService.unsubscribe(copyChannel);
-    };
-  }, [syncAuthSession, fetchBooks, pushNotification]);
-
-  if (authLoading) return null;
-
   return (
     <BrowserRouter>
-      <Navbar />
       <Routes>
-        <Route path="/" element={<Home user={user} />} />
-        <Route path="/login" element={<Login />} />
-        <Route
-          path="/my-borrows"
-          element={
-            <ProtectedRoute>
-              <MyBorrows user={user} />
-            </ProtectedRoute>
-          }
-        />
-        <Route
-          path="/admin"
-          element={
-            <ProtectedRoute requiredPermission="borrow.approve">
-              <AdminDashboard />
-            </ProtectedRoute>
-          }
-        />
+        <Route path="/" element={<Navigate to="/admin" replace />} />
+        <Route path="/admin" element={<AdminLayout />}>
+          {/* Dashboard */}
+          <Route index element={<AdminDashboard />} />
+
+          {/* 圖書管理 */}
+          <Route path="catalog/books" element={<CatalogManagement activeTab="books" />} />
+          <Route path="catalog/books/new" element={<CatalogManagement activeTab="book-create" />} />
+          <Route path="catalog/categories" element={<CatalogManagement activeTab="categories" />} />
+          <Route path="catalog/authors" element={<CatalogManagement activeTab="authors" />} />
+          <Route path="catalog/publishers" element={<CatalogManagement activeTab="publishers" />} />
+          <Route path="catalog/copies" element={<CatalogManagement activeTab="copies" />} />
+
+          {/* 讀者管理 */}
+          <Route path="members/list" element={<MemberManagement activeTab="member-list" />} />
+          <Route path="members/new" element={<MemberManagement activeTab="member-create" />} />
+          <Route path="members/cards" element={<MemberManagement activeTab="member-cards" />} />
+          <Route path="members/history" element={<MemberManagement activeTab="member-history" />} />
+
+          {/* 借閱管理 */}
+          <Route path="circulation/checkout" element={<CirculationDesk defaultMode="checkout" />} />
+          <Route path="circulation/checkin" element={<CirculationDesk defaultMode="checkin" />} />
+          <Route
+            path="circulation/renew"
+            element={
+              <GenericModuleListView
+                title="借閱管理 - 續借管理"
+                columns={[
+                  { key: 'barcode', label: '館藏條碼' },
+                  { key: 'title', label: '書名' },
+                  { key: 'member', label: '借閱人' },
+                  { key: 'due_date', label: '應還日期' },
+                  { key: 'status', label: '狀態', render: (v) => <CopyStateBadge status={v} /> },
+                ]}
+              />
+            }
+          />
+          <Route
+            path="circulation/records"
+            element={
+              <GenericModuleListView
+                title="借閱管理 - 借閱紀錄"
+                columns={[
+                  { key: 'barcode', label: '館藏條碼' },
+                  { key: 'title', label: '書名' },
+                  { key: 'member', label: '借閱人' },
+                  { key: 'borrowed_at', label: '借出日期' },
+                  { key: 'status', label: '狀態', render: (v) => <CopyStateBadge status={v} /> },
+                ]}
+              />
+            }
+          />
+
+          {/* 預約管理 */}
+          <Route path="reservations/list" element={<ReservationManager activeTab="res-list" />} />
+          <Route path="reservations/waitlist" element={<ReservationManager activeTab="res-waitlist" />} />
+          <Route path="reservations/notifications" element={<ReservationManager activeTab="res-notify" />} />
+
+          {/* 逾期管理 */}
+          <Route path="overdue/list" element={<OverdueFineManager activeTab="overdue-list" />} />
+          <Route path="overdue/fines" element={<OverdueFineManager activeTab="fines" />} />
+          <Route path="overdue/payments" element={<OverdueFineManager activeTab="payments" />} />
+
+          {/* 採購管理 */}
+          <Route path="procurement/requests" element={<ProcurementManager activeTab="proc-requests" />} />
+          <Route path="procurement/orders" element={<ProcurementManager activeTab="proc-orders" />} />
+          <Route path="procurement/receive" element={<ProcurementManager activeTab="proc-receive" />} />
+
+          {/* 館藏盤點 */}
+          <Route path="inventory/audit" element={<InventoryManager activeTab="inv-audit" />} />
+          <Route path="inventory/lost" element={<InventoryManager activeTab="inv-lost" />} />
+          <Route path="inventory/discard" element={<InventoryManager activeTab="inv-discard" />} />
+
+          {/* 報表分析 */}
+          <Route path="analytics/borrows" element={<AnalyticsReports activeTab="stat-borrow" />} />
+          <Route path="analytics/collection" element={<AnalyticsReports activeTab="stat-collection" />} />
+          <Route path="analytics/members" element={<AnalyticsReports activeTab="stat-member" />} />
+          <Route path="analytics/overdue" element={<AnalyticsReports activeTab="stat-overdue" />} />
+
+          {/* 系統設定 */}
+          <Route path="settings/users" element={<SystemSettings activeTab="set-users" />} />
+          <Route path="settings/roles" element={<SystemSettings activeTab="set-roles" />} />
+          <Route path="settings/rules" element={<SystemSettings activeTab="set-rules" />} />
+          <Route path="settings/notifications" element={<SystemSettings activeTab="set-notify" />} />
+          <Route path="settings/audit-logs" element={<SystemSettings activeTab="set-audit" />} />
+        </Route>
       </Routes>
     </BrowserRouter>
   );
