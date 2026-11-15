@@ -1,21 +1,17 @@
 import { createClient } from '@supabase/supabase-js';
 
-// 同時相容 Vite 前端 (import.meta.env) 與 Node.js 測試環境 (process.env)
-const getEnv = (key) => {
-  if (typeof import.meta !== 'undefined' && import.meta.env && import.meta.env[key]) {
-    return import.meta.env[key];
-  }
-  if (typeof process !== 'undefined' && process.env && process.env[key]) {
-    return process.env[key];
-  }
-  return '';
-};
+const supabaseUrl = import.meta.env?.VITE_SUPABASE_URL || process.env.VITE_SUPABASE_URL;
+const supabaseAnonKey = import.meta.env?.VITE_SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
-const supabaseUrl = getEnv('VITE_SUPABASE_URL');
-const supabaseAnonKey = getEnv('VITE_SUPABASE_ANON_KEY');
-
-if (!supabaseUrl || !supabaseAnonKey) {
-  throw new Error('缺少 Supabase 環境變數，請確認 .env 檔案中已設定 VITE_SUPABASE_URL 與 VITE_SUPABASE_ANON_KEY');
+// 安全檢查：確保前端環境變數未誤植 Service Role Key
+if (import.meta.env && Object.keys(import.meta.env).some((k) => k.includes('SERVICE_ROLE'))) {
+  throw new Error('嚴重資安警告：偵測到前端環境變數包含 SERVICE_ROLE 金鑰，已強制中斷初始化！');
 }
 
-export const supabase = createClient(supabaseUrl, supabaseAnonKey);
+export const supabase = createClient(supabaseUrl, supabaseAnonKey, {
+  auth: {
+    persistSession: true,
+    autoRefreshToken: true,
+    detectSessionInUrl: true,
+  },
+});
