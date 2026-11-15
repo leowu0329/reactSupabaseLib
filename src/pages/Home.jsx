@@ -1,6 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useLibraryStore } from '../store/useLibraryStore';
 import { libraryService } from '../lib/libraryService';
+import { exceptionHandlerService } from '../lib/exceptionHandlerService';
+import { COPY_STATES } from '../config/copyStateMachine';
+import CopyStateBadge from '../components/CopyStateBadge';
 import AppModal from '../components/AppModal';
 
 export default function Home({ user }) {
@@ -29,7 +32,7 @@ export default function Home({ user }) {
       return;
     }
 
-    const availableCopy = (book.book_copies || []).find((c) => c.status === 'available');
+    const availableCopy = (book.book_copies || []).find((c) => c.status === COPY_STATES.AVAILABLE);
     if (!availableCopy) return;
 
     setModal({
@@ -44,7 +47,12 @@ export default function Home({ user }) {
   const executeBorrow = async (barcode, bookTitle) => {
     try {
       await libraryService.ensureMemberProfile(user.id, user.email);
-      const res = await libraryService.borrowCopy(user.id, barcode, 14, user.id);
+      const res = await exceptionHandlerService.safeBorrowCopy({
+        userId: user.id,
+        barcode,
+        loanDays: 14,
+        operatorId: user.id,
+      });
       await fetchBooks();
 
       pushNotification({
@@ -61,7 +69,40 @@ export default function Home({ user }) {
     } catch (err) {
       setModal({
         show: true,
-        title: '借閱失敗',
+        title: `借閱受阻 (${err.code || 'ERROR'})`,
+        message: err.message,
+        type: 'danger',
+      });
+    }
+  };
+
+  const handleReserveClick = async (book) => {
+    if (!user) {
+      setModal({
+        show: true,
+        title: '請先登入',
+        message: '您需要登入會員帳號才能預約書籍。',
+        type: 'warning',
+      });
+      return;
+    }
+
+    try {
+      await libraryService.ensureMemberProfile(user.id, user.email);
+      const resv = await exceptionHandlerService.safeCreateReservation({
+        userId: user.id,
+        bookId: book.id,
+      });
+      setModal({
+        show: true,
+        title: '預約成功',
+        message: `已為您建立《${book.title}》預約候補，目前候補順位：第 ${resv.queue_position} 順位。`,
+        type: 'success',
+      });
+    } catch (err) {
+      setModal({
+        show: true,
+        title: `預約失敗 (${err.code || 'ERROR'})`,
         message: err.message,
         type: 'danger',
       });
@@ -110,6 +151,7 @@ export default function Home({ user }) {
           {filteredBooks.map((book) => {
             const availableCount = book.available_copies ?? 0;
             const totalCount = book.total_copies ?? 0;
+            const firstCopy = (book.book_copies || [])[0];
 
             return (
               <div className="col-sm-6 col-md-4 col-lg-3" key={book.id}>
@@ -121,35 +163,32 @@ export default function Home({ user }) {
                     style={{ height: '240px' }}
                   />
                   <div className="card-body d-flex flex-column">
-                    <span className="badge bg-secondary align-self-start mb-2">
-                      {book.category_name || '一般圖書'}
-                    </span>
-                    <h5 className="card-title fw-bold text-truncate" title={book.title}>
+                    <h6 className="card-title fw-bold text-truncate" title={book.title}>
                       {book.title}
-                    </h5>
-                    <p className="card-text text-muted small mb-1">
-                      <i className="fa-solid fa-pen-nib me-1"></i> {book.author_names || '未知作者'}
-                    </p>
-                    <p className="card-text text-muted small mb-3">
-                      <i className="fa-solid fa-barcode me-1"></i> {book.isbn}
-                    </p>
-                    <div className="mt-auto pt-2 border-top d-flex justify-content-between align-items-center">
-                      <span className={`small fw-bold ${availableCount > 0 ? 'text-success' : 'text-danger'}`}>
-                        可借閱：{availableCount} / {totalCount}
-                      </span>
-                      <button
-                        className="btn btn-primary btn-sm"
-                        disabled={availableCount === 0}
-                        onClick={() => handleBorrowClick(book)}
-                      >
-                        {availableCount > 0 ? (
-                          <>
-                            <i className="fa-solid fa-hand-holding-heart me-1"></i> 借閱
-                          </>
-                        ) : (
-                          '已全數借出'
-                        )}
-                      </button>
+                    </h6>
+                    <p className="text-muted small mb-2">{book.author_names || '未知作者'}</p>
+                    <div className="mb-2">
+                      {firstCopy && <CopyStateBadge status={firstCopy.status} />}
+                    </div>
+                    <div className="mt-auto">
+                      <div className="small text-secondary mb-2">
+                        可借副本：{availableCount} / {totalCount} 本
+                      </div>
+                      {availableCount > 0 ? (
+                        <button
+                          className="btn btn-primary btn-sm w-100"
+                          onClick={() => handleBorrowClick(book)}
+                        >
+                          立即借閱
+                        </button>
+                      ) : (
+                        <button
+                          className="btn btn-outline-warning btn-sm w-100"
+                          onClick={() => handleReserveClick(book)}
+                        >
+                          預約候補
+                        </button>
+                      )}
                     </div>
                   </div>
                 </div>

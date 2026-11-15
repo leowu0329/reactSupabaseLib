@@ -12,7 +12,8 @@
     "test:rbac": "node --env-file=.env test/rbac.test.js",
     "test:workflow": "node --env-file=.env test/workflow.test.js",
     "test:db": "node --env-file=.env test/database_architecture.test.js",
-    "test:arch": "node --env-file=.env test/system_architecture.test.js"
+    "test:arch": "node --env-file=.env test/system_architecture.test.js",
+    "test:exception": "node --env-file=.env test/exception_state_machine.test.js"
   },
   "dependencies": {
     "@supabase/supabase-js": "^2.119.0",
