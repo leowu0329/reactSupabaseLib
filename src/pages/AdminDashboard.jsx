@@ -1,242 +1,118 @@
-import React, { useState } from 'react';
-import { libraryService } from '../lib/libraryService';
+import React, { useEffect, useState } from 'react';
+import { analyticsService } from '../lib/analyticsService';
 
 export default function AdminDashboard() {
-  const [activeTab, setActiveTab] = useState('circulation');
-  const [message, setMessage] = useState(null);
+  const [metrics, setMetrics] = useState(null);
+  const [loading, setLoading] = useState(true);
 
-  const [bookForm, setBookForm] = useState({
-    isbn: '',
-    title: '',
-    author: '',
-    publisher: '',
-    categoryCode: '800',
-    category: '程式設計與資訊',
-    copyCount: 2,
-  });
-
-  const [readerUserId, setReaderUserId] = useState('');
-  const [barcode, setBarcode] = useState('');
-
-  const [fineId, setFineId] = useState('');
-  const [txType, setTxType] = useState('payment');
-  const [txAmount, setTxAmount] = useState('');
-
-  const handleCreateBook = async (e) => {
-    e.preventDefault();
+  const loadMetrics = async () => {
+    setLoading(true);
     try {
-      const copies = Array.from({ length: Number(bookForm.copyCount) }, (_, i) => ({
-        barcode: `${bookForm.isbn}-C${String(i + 1).padStart(3, '0')}`,
-      }));
-      const res = await libraryService.createNormalizedBookWithCopies(bookForm, copies);
-      setMessage({
-        type: 'success',
-        text: `已建立正規化書目《${res.book.title}》（出版社：${res.publisher.name}、作者：${res.author.name}）及 ${res.copies.length} 筆獨立副本！`,
-      });
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.message });
+      const data = await analyticsService.getDashboardMetrics();
+      setMetrics(data);
+    } finally {
+      setLoading(false);
     }
   };
 
-  const handleBorrow = async () => {
-    try {
-      const res = await libraryService.borrowCopy(readerUserId, barcode);
-      setMessage({
-        type: 'success',
-        text: `交易借出成功！借閱明細 ID：${res.loan_item_id}，應還日期：${new Date(res.due_date).toLocaleDateString()}`,
-      });
-      setBarcode('');
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.message });
-    }
-  };
+  useEffect(() => {
+    loadMetrics();
+  }, []);
 
-  const handleReturn = async () => {
-    try {
-      const res = await libraryService.returnCopy(barcode);
-      let text = `歸還成功！逾期 ${res.overdue_days} 天，產生罰款 NT$ ${res.fine_amount}。`;
-      if (res.fine_id) text += ` (罰款單號 ID: ${res.fine_id})`;
-      setMessage({ type: 'info', text });
-      setBarcode('');
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.message });
-    }
-  };
+  if (loading || !metrics) return <div className="p-4">載入營運統計數據中...</div>;
 
-  const handleFinanceTx = async (e) => {
-    e.preventDefault();
-    try {
-      const res = await libraryService.payOrAdjustFine(fineId, txType, Number(txAmount), 'cash');
-      setMessage({
-        type: 'success',
-        text: `帳務流水已寫入！交易單號：${res.payment_id}，目前累計實收：NT$ ${res.net_paid}，罰款狀態：${res.fine_status}`,
-      });
-    } catch (err) {
-      setMessage({ type: 'danger', text: err.message });
-    }
-  };
+  const kpiCards = [
+    { label: '圖書總數', value: metrics.totalBooks, color: 'primary' },
+    { label: '可借閱數量', value: metrics.availableBooks, color: 'success' },
+    { label: '借出數量', value: metrics.borrowedBooks, color: 'info' },
+    { label: '館藏使用率', value: `${metrics.utilizationRate}%`, color: 'dark' },
+    { label: '今日借閱量', value: metrics.todayBorrows, color: 'primary' },
+    { label: '今日歸還量', value: metrics.todayReturns, color: 'success' },
+    { label: '逾期未還數量', value: metrics.overdueCount, color: 'danger' },
+    { label: '預約等待數量', value: metrics.waitingReservations, color: 'warning' }
+  ];
 
   return (
     <div className="container py-4">
-      <h2 className="fw-bold mb-4">館務管理與資料庫交易作業中心</h2>
+      <div className="d-flex justify-content-between align-items-center mb-4">
+        <h2 className="fw-bold">圖書館營運統計分析 Dashboard</h2>
+        <button className="btn btn-outline-primary btn-sm" onClick={loadMetrics}>
+          重新整理數據
+        </button>
+      </div>
 
-      {message && <div className={`alert alert-${message.type}`}>{message.text}</div>}
-
-      <ul className="nav nav-tabs mb-4">
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === 'circulation' ? 'active' : ''}`}
-            onClick={() => setActiveTab('circulation')}
-          >
-            流通借還（交易鎖定）
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === 'catalog' ? 'active' : ''}`}
-            onClick={() => setActiveTab('catalog')}
-          >
-            正規化編目與副本建檔
-          </button>
-        </li>
-        <li className="nav-item">
-          <button
-            className={`nav-link ${activeTab === 'finance' ? 'active' : ''}`}
-            onClick={() => setActiveTab('finance')}
-          >
-            罰款繳費與帳務流水
-          </button>
-        </li>
-      </ul>
-
-      {activeTab === 'circulation' && (
-        <div className="card p-4 shadow-sm border-0">
-          <div className="mb-3">
-            <label className="form-label">讀者 User UUID（借書必填）</label>
-            <input
-              type="text"
-              className="form-control"
-              value={readerUserId}
-              onChange={(e) => setReaderUserId(e.target.value)}
-              placeholder="輸入讀者帳號 UUID..."
-            />
+      {/* 8 項即時 KPI 卡片 */}
+      <div className="row g-3 mb-4">
+        {kpiCards.map((kpi, idx) => (
+          <div key={idx} className="col-6 col-md-3">
+            <div className={`card border-${kpi.color} shadow-sm h-100`}>
+              <div className="card-body">
+                <div className="text-muted small">{kpi.label}</div>
+                <div className={`fs-3 fw-bold text-${kpi.color}`}>{kpi.value}</div>
+              </div>
+            </div>
           </div>
-          <div className="mb-3">
-            <label className="form-label">實體副本條碼 (book_copies.barcode)</label>
-            <input
-              type="text"
-              className="form-control"
-              value={barcode}
-              onChange={(e) => setBarcode(e.target.value)}
-              placeholder="掃描書籍條碼..."
-            />
-          </div>
-          <div className="d-flex gap-2">
-            <button className="btn btn-primary" onClick={handleBorrow}>確認借出 (FOR UPDATE 鎖定)</button>
-            <button className="btn btn-success" onClick={handleReturn}>確認歸還</button>
+        ))}
+      </div>
+
+      {/* 4 項深度排行榜與趨勢分析 */}
+      <div className="row g-4">
+        <div className="col-md-6">
+          <div className="card shadow-sm h-100">
+            <div className="card-header fw-bold">熱門書籍排行榜 (Top 5)</div>
+            <ul className="list-group list-group-flush">
+              {metrics.topBooks.map((b, i) => (
+                <li key={i} className="list-group-item d-flex justify-content-between">
+                  <span>#{i + 1} {b.name}</span>
+                  <span className="badge bg-primary rounded-pill">{b.count} 次</span>
+                </li>
+              ))}
+            </ul>
           </div>
         </div>
-      )}
 
-      {activeTab === 'catalog' && (
-        <form className="card p-4 shadow-sm border-0" onSubmit={handleCreateBook}>
-          <div className="row g-3">
-            <div className="col-md-4">
-              <label className="form-label">ISBN</label>
-              <input
-                required
-                className="form-control"
-                value={bookForm.isbn}
-                onChange={(e) => setBookForm({ ...bookForm, isbn: e.target.value })}
-              />
-            </div>
-            <div className="col-md-8">
-              <label className="form-label">書名</label>
-              <input
-                required
-                className="form-control"
-                value={bookForm.title}
-                onChange={(e) => setBookForm({ ...bookForm, title: e.target.value })}
-              />
-            </div>
-            <div className="col-md-4">
-              <label className="form-label">作者 (寫入 authors 與 book_authors)</label>
-              <input
-                required
-                className="form-control"
-                value={bookForm.author}
-                onChange={(e) => setBookForm({ ...bookForm, author: e.target.value })}
-              />
-            </div>
-            <div className="col-md-4">
-              <label className="form-label">出版社 (寫入 publishers)</label>
-              <input
-                required
-                className="form-control"
-                value={bookForm.publisher}
-                onChange={(e) => setBookForm({ ...bookForm, publisher: e.target.value })}
-              />
-            </div>
-            <div className="col-md-2">
-              <label className="form-label">分類號</label>
-              <input
-                required
-                className="form-control"
-                value={bookForm.categoryCode}
-                onChange={(e) => setBookForm({ ...bookForm, categoryCode: e.target.value })}
-              />
-            </div>
-            <div className="col-md-2">
-              <label className="form-label">副本數</label>
-              <input
-                type="number"
-                min="1"
-                max="50"
-                className="form-control"
-                value={bookForm.copyCount}
-                onChange={(e) => setBookForm({ ...bookForm, copyCount: e.target.value })}
-              />
-            </div>
+        <div className="col-md-6">
+          <div className="card shadow-sm h-100">
+            <div className="card-header fw-bold">熱門分類分析</div>
+            <ul className="list-group list-group-flush">
+              {metrics.topCategories.map((c, i) => (
+                <li key={i} className="list-group-item d-flex justify-content-between">
+                  <span>{c.name}</span>
+                  <span className="badge bg-success rounded-pill">{c.count} 冊</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <button type="submit" className="btn btn-primary mt-4">建立正規化書目與副本</button>
-        </form>
-      )}
+        </div>
 
-      {activeTab === 'finance' && (
-        <form className="card p-4 shadow-sm border-0" onSubmit={handleFinanceTx}>
-          <div className="row g-3">
-            <div className="col-md-5">
-              <label className="form-label">罰款紀錄 UUID (fines.id)</label>
-              <input
-                required
-                className="form-control"
-                value={fineId}
-                onChange={(e) => setFineId(e.target.value)}
-              />
-            </div>
-            <div className="col-md-3">
-              <label className="form-label">交易類型</label>
-              <select className="form-select" value={txType} onChange={(e) => setTxType(e.target.value)}>
-                <option value="payment">繳費 (payment)</option>
-                <option value="waiver">折抵減免 (waiver)</option>
-                <option value="refund">退款 (refund)</option>
-              </select>
-            </div>
-            <div className="col-md-4">
-              <label className="form-label">交易金額 (NT$)</label>
-              <input
-                type="number"
-                min="1"
-                required
-                className="form-control"
-                value={txAmount}
-                onChange={(e) => setTxAmount(e.target.value)}
-              />
-            </div>
+        <div className="col-md-6">
+          <div className="card shadow-sm h-100">
+            <div className="card-header fw-bold">讀者借閱排行</div>
+            <ul className="list-group list-group-flush">
+              {metrics.topReaders.map((r, i) => (
+                <li key={i} className="list-group-item d-flex justify-content-between">
+                  <span>{r.name}</span>
+                  <span className="badge bg-info text-dark rounded-pill">{r.count} 本</span>
+                </li>
+              ))}
+            </ul>
           </div>
-          <button type="submit" className="btn btn-warning mt-4 fw-bold">寫入獨立帳務交易流水</button>
-        </form>
-      )}
+        </div>
+
+        <div className="col-md-6">
+          <div className="card shadow-sm h-100">
+            <div className="card-header fw-bold">每月借閱趨勢</div>
+            <ul className="list-group list-group-flush">
+              {metrics.monthlyTrend.map((m, i) => (
+                <li key={i} className="list-group-item d-flex justify-content-between">
+                  <span>{m.month}</span>
+                  <span className="fw-bold">{m.count} 筆借閱</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
