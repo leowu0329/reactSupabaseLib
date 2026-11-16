@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { supabase } from '../lib/supabase.js';
 import { libraryService } from '../lib/libraryService.js';
+import { extensibilityService } from '../lib/extensibilityService.js';
 import { ROLES, checkPermission } from '../config/permissions.js';
 
 export const useLibraryStore = create((set, get) => ({
@@ -10,14 +11,19 @@ export const useLibraryStore = create((set, get) => ({
   role: ROLES.GUEST,
   authLoading: true,
 
-  // 館藏書目快取狀態
+  // 多分館切換狀態
+  branches: [],
+  activeBranchId: null,
+
+  // 館藏書目與電子書快取狀態
   books: [],
+  ebooks: [],
+  aiRecommendations: [],
   booksLoading: false,
 
   // Realtime 即時通知佇列
   notifications: [],
 
-  // 初始化或更新目前登入者與 RBAC 角色
   syncAuthSession: async (sessionUser) => {
     if (!sessionUser) {
       set({
@@ -43,13 +49,21 @@ export const useLibraryStore = create((set, get) => ({
     });
   },
 
-  // 權限檢查輔助方法
+  setBranches: (branches) => {
+    const current = get().activeBranchId;
+    set({
+      branches,
+      activeBranchId: current || branches?.[0]?.id || null,
+    });
+  },
+
+  setActiveBranch: (branchId) => set({ activeBranchId: branchId }),
+
   can: (permission) => {
     const currentRole = get().role;
     return checkPermission(currentRole, permission);
   },
 
-  // 載入完整正規化書目與副本狀態
   fetchBooks: async () => {
     set({ booksLoading: true });
     try {
@@ -62,7 +76,12 @@ export const useLibraryStore = create((set, get) => ({
     }
   },
 
-  // 推入即時通知
+  loadAiRecommendations: async (memberId, customService = extensibilityService) => {
+    const recs = await customService.getAiBookRecommendations(memberId);
+    set({ aiRecommendations: recs });
+    return recs;
+  },
+
   pushNotification: (notice) => {
     const item = {
       id: `${Date.now()}_${Math.random().toString(36).slice(2, 7)}`,
@@ -76,7 +95,6 @@ export const useLibraryStore = create((set, get) => ({
     return item;
   },
 
-  // 標記所有通知為已讀
   markAllNotificationsRead: () => {
     set((state) => ({
       notifications: state.notifications.map((n) => ({ ...n, read: true })),

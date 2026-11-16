@@ -3,9 +3,11 @@ import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
 import AdminLayout from './layouts/AdminLayout';
 import AdminDashboard from './pages/AdminDashboard';
 import CirculationDesk from './pages/CirculationDesk';
+import SelfServiceKiosk from './pages/SelfServiceKiosk';
 import CatalogManagement from './pages/admin/CatalogManagement';
 import MemberManagement from './pages/admin/MemberManagement';
 import InventoryManager from './pages/admin/InventoryManager';
+import ExtensibilityManager from './pages/admin/ExtensibilityManager';
 import {
   ReservationManager,
   OverdueFineManager,
@@ -21,8 +23,9 @@ export default function App() {
     <BrowserRouter>
       <Routes>
         <Route path="/" element={<Navigate to="/admin" replace />} />
+        <Route path="/kiosk" element={<SelfServiceKiosk />} />
+
         <Route path="/admin" element={<AdminLayout />}>
-          {/* Dashboard */}
           <Route index element={<AdminDashboard />} />
 
           {/* 圖書管理 */}
@@ -73,33 +76,30 @@ export default function App() {
             }
           />
 
-          {/* 預約管理 */}
+          {/* 智慧擴充中心 */}
+          <Route path="extensibility/branches" element={<ExtensibilityManager activeTab="ext-branches" />} />
+          <Route path="extensibility/rfid" element={<ExtensibilityManager activeTab="ext-rfid" />} />
+          <Route path="extensibility/ebooks" element={<ExtensibilityManager activeTab="ext-ebooks" />} />
+          <Route path="extensibility/notifications" element={<ExtensibilityManager activeTab="ext-notifications" />} />
+          <Route path="extensibility/ai-recommend" element={<ExtensibilityManager activeTab="ext-ai" />} />
+
+          {/* 預約、逾期、採購、盤點、報表、系統設定 */}
           <Route path="reservations/list" element={<ReservationManager activeTab="res-list" />} />
           <Route path="reservations/waitlist" element={<ReservationManager activeTab="res-waitlist" />} />
           <Route path="reservations/notifications" element={<ReservationManager activeTab="res-notify" />} />
-
-          {/* 逾期管理 */}
           <Route path="overdue/list" element={<OverdueFineManager activeTab="overdue-list" />} />
           <Route path="overdue/fines" element={<OverdueFineManager activeTab="fines" />} />
           <Route path="overdue/payments" element={<OverdueFineManager activeTab="payments" />} />
-
-          {/* 採購管理 */}
           <Route path="procurement/requests" element={<ProcurementManager activeTab="proc-requests" />} />
           <Route path="procurement/orders" element={<ProcurementManager activeTab="proc-orders" />} />
           <Route path="procurement/receive" element={<ProcurementManager activeTab="proc-receive" />} />
-
-          {/* 館藏盤點 */}
           <Route path="inventory/audit" element={<InventoryManager activeTab="inv-audit" />} />
           <Route path="inventory/lost" element={<InventoryManager activeTab="inv-lost" />} />
           <Route path="inventory/discard" element={<InventoryManager activeTab="inv-discard" />} />
-
-          {/* 報表分析 */}
           <Route path="analytics/borrows" element={<AnalyticsReports activeTab="stat-borrow" />} />
           <Route path="analytics/collection" element={<AnalyticsReports activeTab="stat-collection" />} />
           <Route path="analytics/members" element={<AnalyticsReports activeTab="stat-member" />} />
           <Route path="analytics/overdue" element={<AnalyticsReports activeTab="stat-overdue" />} />
-
-          {/* 系統設定 */}
           <Route path="settings/users" element={<SystemSettings activeTab="set-users" />} />
           <Route path="settings/roles" element={<SystemSettings activeTab="set-roles" />} />
           <Route path="settings/rules" element={<SystemSettings activeTab="set-rules" />} />
